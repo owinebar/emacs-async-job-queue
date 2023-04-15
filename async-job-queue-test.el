@@ -58,8 +58,8 @@
   exprs)
   
 (cl-defstruct (ajqt--test-run
-	       (:constructor ajq--test-run-create)
-	       (:copier ajq--test-run-copy))
+	       (:constructor ajqt--test-run-create)
+	       (:copier ajqt--test-run-copy))
   "Test run"
   id
   table
@@ -79,7 +79,19 @@
     (setq lim0 10))
   (unless lim1
     (setq lim1 60))
-  `(progn (sleep-for ,(+ (random (- lim1 lim0)) lim0)) '(,id ,lim1)))
+  (let (p e)
+    (if (<= lim1 lim0)
+	(setq e `(lambda () (sleep-for ,lim1) '(,id ,lim1)))
+      (setq p (+ (random (- lim1 lim0)) lim0)
+	    e `(lambda ()
+		 (sleep-for ,p)
+		 '(,id ,p))))
+    ;; (message "Test expr %S %S %S: %S"
+    ;; 	     id
+    ;; 	     lim0
+    ;; 	     lim1
+    ;; 	     e)
+    e))
 
 (defun ajqt--make-test (N &optional lim0 lim1)
   (unless lim0
@@ -89,7 +101,9 @@
   (let ((exprs nil)
 	(i N))
     (while (> i 0)
-      (push `(,i ,(ajqt--make-test-expr i lim0 lim1)) exprs))
+      (push `(,i ,(ajqt--make-test-expr i lim0 lim1)) exprs)
+      (message "%S %S" i exprs)
+      (cl-decf i))
     (ajq--test-create
      :lim0 lim0
      :lim1 lim1
@@ -112,7 +126,7 @@
   (let ((q (ajqt--test-run-results test-run))
 	(t0 (ajq--job-started job))
 	(t1 (ajq--job-ended job))
-	(tbl (ajq--test-run-table test-run))
+	(tbl (ajqt--test-run-table test-run))
 	(id (ajq--job-id job))
 	(lb (ajqt--test-run-log test-run)))
     (with-current-buffer lb
@@ -124,7 +138,7 @@
   (let ((q (ajqt--test-run-results test-run))
 	(t0 (ajq--job-started job))
 	(t1 (ajq--job-ended job))
-	(tbl (ajq--test-run-table test-run))
+	(tbl (ajqt--test-run-table test-run))
 	(id (ajq--job-id job))
 	(lb (ajqt--test-run-log test-run))
 	dt)
@@ -138,7 +152,7 @@
   (let ((q (ajqt--test-run-results test-run))
 	(t0 (ajq--job-started job))
 	(t1 (ajq--job-ended job))
-	(tbl (ajq--test-run-table test-run))
+	(tbl (ajqt--test-run-table test-run))
 	(id (ajq--job-id job))
 	(lb (ajqt--test-run-log test-run))
 	dt)
@@ -152,7 +166,7 @@
   (let ((q (ajqt--test-run-results test-run))
 	(t0 (ajq--job-started job))
 	(t1 (ajq--job-ended job))
-	(tbl (ajq--test-run-table test-run))
+	(tbl (ajqt--test-run-table test-run))
 	(id (ajq--job-id job))
 	(lb (ajqt--test-run-log test-run))
 	dt)
@@ -164,7 +178,7 @@
 
 (defvar ajqt--tests-created 0)
 
-(defun ajqt--make-test-run (tbl test &optional freq max-time d logname)
+(defun ajqt--make-test-run (tbl test &optional freq max-time id logname)
   (cl-incf ajqt--tests-created)
   (unless id
     (setq id (intern (format "ajq-test-%S" ajqt--tests-created))))
@@ -173,7 +187,6 @@
   (unless freq
     (setq freq 1))
   (setf (ajq--table-freq tbl) freq)
-  (setf (ajq--table-max-time tbl) max-time)
   (let ((tr (ajqt--test-run-create
 	     :id id
 	     :table tbl
@@ -215,10 +228,35 @@
 		 (ajqt--test-run-on-timeout tr)
 		 (ajqt--test-run-on-quit tr)))
       (push job jobs))
-    jobs))
+    `(,tbl ,tr ,jobs)))
       
 
 ;;; test queue
+
+(defvar ajqt-test1 
+  (ajqt--make-test 10 20 20))
+
+(defvar ajqt-test2 
+  (ajqt--make-test 5 20 30))
+
+(defvar ajqt-tbl
+  (ajq-make-job-queue 1 2))
+
+(setq slot1 (ajq--alloc-slot ajqt-tbl))
+(setq job1 (ajq--reclaim-slot slot1))
+
+(defvar ajqt-test1-run1
+  (ajqt--make-test-run
+   ajqt-tbl ajqt-test1
+   1 nil 't1))
+
+(defvar ajqt-test1-run2
+  (ajqt-run-test ajqt-test1 10 2 't1r5))
+
+
+;;(pp (car ajqt-test1-run2) (get-buffer "*scratch*"))
+
+;;(cancel-timer (ajq--table-timer (car ajqt-test1-run2)))
 
 (provide 'async-job-queue-test)
 ;;; async-job-queue-test.el ends here
