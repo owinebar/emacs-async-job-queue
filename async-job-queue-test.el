@@ -33,19 +33,19 @@
 
 ;; test of ajq--queue struct
 
-(let ((q (ajq--make-queue))
-      (i 0)
-      (N 10))
-  (message "Test queue %S" q)
-  (while (< i N)
-    (ajq--queue-push q i)
-    (cl-incf i))
-  (message "Test queue pushed %S: %S" N q)
-  (while (not (ajq--queue-empty-p q))
-    (setq i (ajq--queue-pop q))
-    (message "Test queue popped %S: %S" i q))
-  (message "Queue test done: %S" q)
-  nil)
+;; (let ((q (ajq--make-queue))
+;;       (i 0)
+;;       (N 10))
+;;   (message "Test queue %S" q)
+;;   (while (< i N)
+;;     (ajq--queue-push q i)
+;;     (cl-incf i))
+;;   (message "Test queue pushed %S: %S" N q)
+;;   (while (not (ajq--queue-empty-p q))
+;;     (setq i (ajq--queue-pop q))
+;;     (message "Test queue popped %S: %S" i q))
+;;   (message "Queue test done: %S" q)
+;;   nil)
     
   
 (cl-defstruct (ajqt--test
@@ -81,9 +81,9 @@
     (setq lim1 60))
   (let (p e)
     (if (<= lim1 lim0)
-	(setq e `(lambda () (sleep-for ,lim1) '(,id ,lim1)))
+	(setq e `(progn (sleep-for ,lim1) '(,id ,lim1)))
       (setq p (+ (random (- lim1 lim0)) lim0)
-	    e `(lambda ()
+	    e `(progn
 		 (sleep-for ,p)
 		 '(,id ,p))))
     ;; (message "Test expr %S %S %S: %S"
@@ -112,15 +112,16 @@
 
 (defun ajqt--report-table (log tbl)
   (with-current-buffer log
+    (goto-char (point-max))
     (let ((q (ajq--table-queue tbl)))
-      (insert (format "Current table free %S"
-		      (ajq--table-free tbl)))
-      (insert (format "Current table in-use %S"
-		      (ajq--table-in-use tbl)))
-      (insert (format "Current table queue-size %S"
-		      (ajq--queue-size q)))
-      (insert (format "Current table slots\n%S"
-		      (ajq--table-slots tbl))))))
+      (insert (format "Current table %S free %S\n"
+		      (ajq--table-free tbl)
+		      (ajq--slots-free-list tbl)))
+      (insert (format "Current table %S in-use %S\n"
+		      (ajq--table-in-use tbl)
+		      (ajq--slots-in-use-list tbl)))
+      (insert (format "Current table queue-size %S\n"
+		      (ajq--queue-size q))))))
 
 (defun ajqt--dispatched-test (job test-run)
   (let ((q (ajqt--test-run-results test-run))
@@ -130,9 +131,10 @@
 	(id (ajq--job-id job))
 	(lb (ajqt--test-run-log test-run)))
     (with-current-buffer lb
-      (insert (format "Dispatched id %S %S" id job))
-      (ajqt--report-table tbl))
-    (ajq--queue-push q `(Dispatched ,id ,t0 ,t1 ,job))))
+      (goto-char (point-max))
+      (insert (format "Dispatched job id %S\n" id))
+      (ajqt--report-table lb tbl))
+    (ajq--queue-push q `(Dispatched ,id ,t0 ,t1))))
 
 (defun ajqt--succeed-test (job v test-run)
   (let ((q (ajqt--test-run-results test-run))
@@ -144,9 +146,10 @@
 	dt)
     (setq dt (float-time (time-subtract t1 t0))) 
     (with-current-buffer lb
-      (insert (format "Success id %S %S %S" id v job))
+      (goto-char (point-max))
+      (insert (format "Success job id %S returned %S\n" id v))
       (ajqt--report-table lb tbl))
-    (ajq--queue-push q `(Success ,id ,t0 ,t1 ,dt ,v ,job))))
+    (ajq--queue-push q `(Success ,id ,t0 ,t1 ,dt ,v))))
 
 (defun ajqt--timeout-test (job test-run)
   (let ((q (ajqt--test-run-results test-run))
@@ -158,9 +161,10 @@
 	dt)
     (setq dt (float-time (time-subtract t1 t0)))
     (with-current-buffer lb
-      (insert (format "Timeout id %S %S %S" dt id job))
+      (goto-char (point-max))
+      (insert (format "Timeout job %S after %S\n" id dt))
       (ajqt--report-table lb tbl))
-    (ajq--queue-push q `(Timeout ,id ,t0 ,t1 ,dt ,v ,job))))
+    (ajq--queue-push q `(Timeout ,id ,t0 ,t1 ,dt))))
 
 (defun ajqt--quit-test (job test-run)
   (let ((q (ajqt--test-run-results test-run))
@@ -172,9 +176,10 @@
 	dt)
     (setq dt (float-time (time-subtract t1 t0)))
     (with-current-buffer lb
-      (insert (format "Quit id %S %S %S" dt id job))
-      (ajqt--report-table tbl))
-    (ajq--queue-push q `(quit ,id ,t0 ,t1 ,dt ,v ,job))))
+      (goto-char (point-max))
+      (insert (format "Quit job id %S after %S\n" id dt))
+      (ajqt--report-table lb tbl))
+    (ajq--queue-push q `(quit ,id ,t0 ,t1 ,dt ,v))))
 
 (defvar ajqt--tests-created 0)
 
@@ -195,6 +200,9 @@
 	     :test test
 	     :results (ajq--make-queue)
 	     :log (get-buffer-create logname))))
+    (setf (ajqt--test-run-on-dispatch tr)
+	  (lambda (job)
+	    (ajqt--dispatched-test job tr)))
     (setf (ajqt--test-run-on-succeed tr)
 	  (lambda (job v)
 	    (ajqt--succeed-test job v tr)))
@@ -214,7 +222,9 @@
 	  (lambda (tbl)
 	    (let ((log (ajqt--test-run-log tr)))
 	      (with-current-buffer log
-		(insert (format "Completed %S \n%S\n%S\n" id tbl tr))))))
+		(insert (format "Completed test run %S\n" id))
+		(let ((inhibit-message t))
+		  (pp (ajqt-displayable-test-run tr) (current-buffer)))))))
     (setq ls (ajqt--test-exprs test))
     (while ls
       (setq e (pop ls)
@@ -229,7 +239,21 @@
 		 (ajqt--test-run-on-quit tr)))
       (push job jobs))
     `(,tbl ,tr ,jobs)))
-      
+
+(defun ajqt-displayable-test-run (tr)
+  `(ajqt-test-run
+    (id ,(ajqt--test-run-id tr))
+    (table ,(ajq--table-id (ajqt--test-run-table tr)))
+    (test ,(ajqt--test-run-test tr))
+    (results ,(ajqt--test-run-results tr))
+    (log ,(ajqt--test-run-log tr))
+    (freq ,(ajqt--test-run-freq tr))
+    (max-time ,(ajqt--test-run-max-time tr))
+    (on-dispatch ,(not (not (ajqt--test-run-on-dispatch tr))))
+    (on-succeed ,(not (not (ajqt--test-run-on-succeed tr))))
+    (on-timeout ,(not (not (ajqt--test-run-on-timeout tr))))
+    (on-quit ,(not (not (ajqt--test-run-on-quit tr))))))
+
 
 ;;; test queue
 
@@ -250,8 +274,11 @@
    ajqt-tbl ajqt-test1
    1 nil 't1))
 
-(defvar ajqt-test1-run2
-  (ajqt-run-test ajqt-test1 10 2 't1r5))
+;; (defvar ajqt-test1-run2
+;;   (ajqt-run-test ajqt-test1 1 2 't1r5))
+
+;; (defvar ajqt-test1-run3
+;;   (ajqt-run-test ajqt-test1 1 (num-processors) 't1r3))
 
 
 ;;(pp (car ajqt-test1-run2) (get-buffer "*scratch*"))
