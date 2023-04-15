@@ -80,6 +80,11 @@ relative time string"
   poll-freq
   timer)
 
+(cl-defstruct (ajq--queue
+	       (:constructor ajq--queue-create)
+	       (:copier ajq--queue-copy))
+  head
+  last)
 
 (cl-defstruct (ajq--slot
 	       (:constructor ajq--slot-create)
@@ -111,10 +116,12 @@ relative time string"
    `future' object representing the async process
    `ended' time result was ready or job terminated
    `result' nil if timed out, else singleton list holding return value
+   `dispatched' callback function to run immediately after starting the job
    `succeed' callback function to use when results are available
    `timeout' callback function to use when process times out
    `quit' callback function to use when job is canceled"
   id
+  table
   run-slot
   program
   started
@@ -122,6 +129,7 @@ relative time string"
   future
   ended
   result
+  dispatched
   succeed
   timeout
   quit)
@@ -129,31 +137,44 @@ relative time string"
 
 (defun ajq--make-queue ()
   "Create a simple queue structure"
-  (cons nil nil))
+  (ajq--queue-create :head nil :last nil))
 
 (defun ajq--queue-empty-p (q)
   "Test queue whether the queue can be popped"
-  (null (car q)))
+  (null (ajq--queue-head q)))
+
+(defun ajq--queue-size (q)
+  "Length of queue"
+  (length (ajq--queue-head q)))
+
+(defun ajq--queue-list (q)
+  "Copy of queue as list"
+  (seq-copy (ajq--queue-head q)))
 
 (defun ajq--queue-push  (q e)
   "Push an element onto the end of the queue"
   (if (ajq--queue-empty-p q)
       (progn
-	(setcar q (cons e nil))
-	(setcdr q (car q)))
-    (setcdr (cdr q) (cons e nil))
-    (setcdr q (cddr q)))
+	(setf (ajq--queue-head q) (cons e nil))
+	(setf (ajq--queue-last q)
+	      (ajq--queue-head q)))
+    (let ((l (ajq--queue-last q)))
+      (setcdr l (cons e nil))
+      (setf (ajq--queue-last q) (cdr l))))
   q)
 
 (defun ajq--queue-pop (q)
   "Pop an element from the front of the queue"
-  (let ((r (caar q)))
-    (if (eq (car q) (cdr q))
-	;; (cddr q) is always nil
+  (let ((h (ajq--queue-head q))
+	(l (ajq--queue-last q))
+	r)
+    (setq r (car h))
+    (if (eq h l)
+	;; (cdr l) is always nil
 	(progn
-	  (setcar q nil)
-	  (setcdr q nil))
-      (setcar q (cdar q)))
+	  (setf (ajq--queue-head q) nil)
+	  (setf (ajq--queue-last q) nil))
+      (setf (ajq--queue-head q) (cdr h)))
     r))
   
 (defun ajq-make-job-queue (freq &optional N on-empty)
@@ -285,20 +306,24 @@ in-use list.  Returns the allocated slot"
       (setq job (and (not (ajq--queue-empty-p q))
 		     (ajq--queue-pop q)))))
   (when job
-    (let ((s (ajq--alloc-slot tbl)))
+    (let ((s (ajq--alloc-slot tbl))
+	  (on-dispatch (ajq--job-dispatched job)))
       (setf (ajq--job-run-slot job) slot-idx)
       (setf (ajq--job-started job) (current-time))
       (let ((f (async-start (ajq--job-program job))))
-	(setf (ajq--job-future job) f))))
+	(setf (ajq--job-future job) f)
+	(when on-dispatch
+	  (funcall on-dispatch job)))))
   job)
   
-(defun ajq-schedule-job (tbl prog &optional id on-finish max-time on-timeout on-quit)
+(defun ajq-schedule-job (tbl prog &optional id on-dispatch on-finish max-time on-timeout on-quit)
   "User function to add a job to the job queue"
   (let ((job (ajq--job-create
 	      :id id
 	      :table tbl
 	      :program prog
 	      :max-time max-time
+	      :dispatched on-dispatch
 	      :succeed on-finish
 	      :timeout on-timeout
 	      :quit on-quit))
@@ -423,7 +448,7 @@ as slots become available"
 
 
 
-(provide 'ajq)
+(provide 'async-job-queue)
 
 ;;; async-job-queue.el ends here
 
