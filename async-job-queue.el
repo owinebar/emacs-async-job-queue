@@ -1,4 +1,4 @@
-;;; async-job-queue.el        -*- lexical-binding: t; -*-
+;;; async-job-queue.el ---     -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Onnie Winebarger
 
