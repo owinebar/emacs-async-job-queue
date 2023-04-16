@@ -5,6 +5,9 @@
 ;; Author: Onnie Winebarger
 ;; Copyright (C) 2023 by Onnie Lynn Winebarger <owinebar@gmail.com>
 ;; Keywords: extensions, lisp
+;; Version: 0.1
+;; Package-Requires: ((async))
+;; URL: https://github.com/owinebar/emacs-async-job-queue
 
 ;; This program is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
