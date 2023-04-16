@@ -1,5 +1,5 @@
 # emacs-async-job-queue
-Elisp package for managing an arbitrary number of queued async jobs
+Elisp package for managing an arbitrary number of queued async jobs allocated to a limited number of active job slots.
 
     (async-job-queue-make-job-queue <frequency> [ <number slots> <on-empty> <inactive> <id> ])
 
@@ -35,4 +35,6 @@ Cancels all jobs in *job-queue*.  May be useful for "quit" action.
     (async-job-queue-deactivate-queue <job-queue>)
 
 Activate or deactivate *job-queue*.  
+
+aync-job-queue-test.el has code for testing async-job-queue.  The test jobs are simple expressions to wait random times before returning a value.  The activity of the job queue is printed in a dedicated log buffer.  The test code may be treated as an example of how to use job queues.
 
