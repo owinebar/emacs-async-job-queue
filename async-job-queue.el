@@ -644,9 +644,3 @@ Start dispatching jobs and monitoring for job completion."
 ;; Local Variables:
 ;; read-symbol-shorthands: (("ajq-" . "async-job-queue-"))
 ;; End:
-
-
-;; Local Variables:
-;; read-symbol-shorthands: (("ajq-" . "async-job-queue-"))
-;; End:
-
