@@ -176,7 +176,7 @@
 	  ,(ajq--table-last-free tbl)
 	  ,(ajq--slots-free-list tbl))
     (queue ,(ajq--queue-size (ajq--table-queue tbl)))
-    (on-empty ,(not (not (ajq--table-on-empty tbl))))
+    (on-empty ,(and (ajq--table-on-empty tbl) t))
     (freq ,(ajq--table-freq tbl))
     (timer ,(ajq--timer-info (ajq--table-timer tbl)))))
 
@@ -201,10 +201,10 @@
     (max-time ,(ajq--job-max-time job))
     (future ,(ajq--job-future job))
     (result ,(ajq--job-result job))
-    (dispatched ,(not (not (ajq--job-dispatched job))))
-    (succeed ,(not (not (ajq--job-succeed job))))
-    (timeout ,(not (not (ajq--job-timeout job))))
-    (quit ,(not (not (ajq--job-quit job))))))
+    (dispatched ,(and (ajq--job-dispatched job) t))
+    (succeed ,(and (ajq--job-succeed job) t))
+    (timeout ,(and (ajq--job-timeout job) t))
+    (quit ,(and (ajq--job-quit job) t))))
 
 (defun async-job-queue--expr-to-async (e)
   "Convert expression E to thunk as necessary for `async-start'."
