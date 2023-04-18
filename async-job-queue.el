@@ -624,16 +624,31 @@ Dispatch pending jobs as slots become available when TBL is active."
       (setq idx (ajq--slot-next slot)))
     (ajq--ensure-queue-running tbl)))
 
-(defun async-job-queue-deactivate-queue (tbl)
-  "Deactivate job queue TBL.
-Running jobs will finish.  Queued jobs will remain pending until the
-queue is reactivated."
-  (setf (ajq--table-active tbl) nil))
+(defun async-job-queue-add-deactivation (tbl callback)
+  "Add CALLBACK to on-deactivate hook of job queue TBL"
+  (push callback (ajq--table-on-deactivate tbl)))
 
-(defun async-job-queue-activate-queue (tbl)
+(defun async-job-queue-add-activation (tbl callback)
+  "Add CALLBACK to on-activate hook of job queue TBL"
+  (push callback (ajq--table-on-activate tbl)))
+
+(defun async-job-queue-deactivate-queue (tbl &optional key)
+  "Deactivate job queue TBL with KEY.
+Running jobs will finish.  Queued jobs will remain pending until the
+queue is reactivated.  Functions on the deactivation hook will be
+called with TBL and KEY as arguments."
+  (setf (ajq--table-active tbl) nil)
+  (let ((ls (ajq--table-on-deactivate tbl)))
+    (while ls
+      (funcall (pop ls) tbl key))))
+
+(defun async-job-queue-activate-queue (tbl &optional key)
   "Activate job queue TBL.
 Start dispatching jobs and monitoring for job completion."
   (setf (ajq--table-active tbl) t)
+  (let ((ls (ajq--table-on-activate tbl)))
+    (while ls
+      (funcall (pop ls) tbl key)))
   (ajq--ensure-queue-running tbl))
 
 
