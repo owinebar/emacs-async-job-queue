@@ -37,6 +37,7 @@
 
 (require 'cl-lib)
 (require 'async)
+(require 'queue)
 
 (defgroup async-job-queue nil
   "Customization group for async-job-queue package."
@@ -175,7 +176,7 @@
 	  ,(ajq--table-first-free tbl)
 	  ,(ajq--table-last-free tbl)
 	  ,(ajq--slots-free-list tbl))
-    (queue ,(ajq--queue-size (ajq--table-queue tbl)))
+    (queue ,(q-length (ajq--table-queue tbl)))
     (on-empty ,(and (ajq--table-on-empty tbl) t))
     (freq ,(ajq--table-freq tbl))
     (timer ,(ajq--timer-info (ajq--table-timer tbl)))))
@@ -215,48 +216,6 @@
 		   (functionp e)))
     (setq e `(lambda () ,e)))
   e)
-
-(defun async-job-queue--make-queue ()
-  "Create a simple queue structure."
-  (ajq--queue-create :head nil :last nil))
-
-(defun async-job-queue--queue-empty-p (q)
-  "Test whether the queue Q can be popped."
-  (null (ajq--queue-head q)))
-
-(defun async-job-queue--queue-size (q)
-  "Length of queue Q."
-  (length (ajq--queue-head q)))
-
-(defun async-job-queue--queue-list (q)
-  "Copy of queue Q as list."
-  (seq-copy (ajq--queue-head q)))
-
-(defun async-job-queue--queue-push  (q e)
-  "Push an element E onto the end of the queue Q."
-  (if (ajq--queue-empty-p q)
-      (progn
-	(setf (ajq--queue-head q) (cons e nil))
-	(setf (ajq--queue-last q)
-	      (ajq--queue-head q)))
-    (let ((l (ajq--queue-last q)))
-      (setcdr l (cons e nil))
-      (setf (ajq--queue-last q) (cdr l))))
-  q)
-
-(defun async-job-queue--queue-pop (q)
-  "Pop an element from the front of the queue Q."
-  (let ((h (ajq--queue-head q))
-	(l (ajq--queue-last q))
-	r)
-    (setq r (car h))
-    (if (eq h l)
-	;; (cdr l) is always nil
-	(progn
-	  (setf (ajq--queue-head q) nil)
-	  (setf (ajq--queue-last q) nil))
-      (setf (ajq--queue-head q) (cdr h)))
-    r))
 
 (defun async-job-queue--slots-in-use-list (tbl)
   "Indexes of slots in in-use list of TBL."
@@ -304,7 +263,7 @@ Arguments:
 	      :active (not inactive)
 	      :in-use 0
 	      :free N
-	      :queue (ajq--make-queue)
+	      :queue (make-queue)
 	      :on-empty on-empty
 	      :on-activate on-activate
 	      :on-deactivate on-deactivate
@@ -425,8 +384,8 @@ associated with S"
 If JOB is nil, dispatch first job from queue of pending jobs."
   (unless job
     (let ((q (ajq--table-queue tbl)))
-      (setq job (and (not (ajq--queue-empty-p q))
-		     (ajq--queue-pop q)))))
+      (setq job (and (not (q-empty q))
+		     (q-dequeue q)))))
   (when job
     (let ((s (ajq--alloc-slot tbl))
 	  (on-dispatch (ajq--job-dispatched job)))
@@ -468,9 +427,9 @@ ON-QUIT - continuation to call if job is cancelled"
 	(active (ajq--table-active tbl))
 	(n-in-use (ajq--table-in-use tbl)))
     (if (or (not active)
-	    (not (ajq--queue-empty-p q))
+	    (not (q-empty q))
 	    (= (ajq--table-free tbl) 0))
-	(ajq--queue-push q job)
+	(q-enqueue q job)
       ;; optimization
       (ajq--dispatch tbl job))
     ;; timer might not be running if the table was empty
@@ -484,7 +443,7 @@ ON-QUIT - continuation to call if job is cancelled"
   "Dispatch jobs until TBL is full or queue of pending jobs is empty."
   (when (ajq--table-active tbl)
     (let ((q (ajq--table-queue tbl)))
-      (while (and (not (ajq--queue-empty-p q))
+      (while (and (not (q-empty q))
 		  (> (ajq--table-free tbl) 0))
 	(ajq--dispatch tbl)))))
 
@@ -529,8 +488,8 @@ ON-QUIT - continuation to call if job is cancelled"
   "Cancel all jobs associated with job queue TBL."
   ;; first the queued jobs, if any
   (let ((q (ajq--table-queue tbl)))
-    (while (not (ajq--queue-empty-p q))
-      (ajq-cancel-job (ajq--queue-pop q))))
+    (while (not (q-empty q))
+      (ajq-cancel-job (q-dequeue q))))
   (let ((idx (ajq--table-first-used tbl))
 	(slots (ajq--table-slots tbl))
 	a)
@@ -625,11 +584,11 @@ Dispatch pending jobs as slots become available when TBL is active."
     (ajq--ensure-queue-running tbl)))
 
 (defun async-job-queue-add-deactivation (tbl callback)
-  "Add CALLBACK to on-deactivate hook of job queue TBL"
+  "Add CALLBACK to on-deactivate hook of job queue TBL."
   (push callback (ajq--table-on-deactivate tbl)))
 
 (defun async-job-queue-add-activation (tbl callback)
-  "Add CALLBACK to on-activate hook of job queue TBL"
+  "Add CALLBACK to on-activate hook of job queue TBL."
   (push callback (ajq--table-on-activate tbl)))
 
 (defun async-job-queue-deactivate-queue (tbl &optional key)
@@ -643,7 +602,7 @@ called with TBL and KEY as arguments."
       (funcall (pop ls) tbl key))))
 
 (defun async-job-queue-activate-queue (tbl &optional key)
-  "Activate job queue TBL.
+  "Activate job queue TBL with KEY.
 Start dispatching jobs and monitoring for job completion."
   (setf (ajq--table-active tbl) t)
   (let ((ls (ajq--table-on-activate tbl)))
@@ -655,6 +614,10 @@ Start dispatching jobs and monitoring for job completion."
 (provide 'async-job-queue)
 
 ;;; async-job-queue.el ends here
+
+;; Local Variables:
+;; read-symbol-shorthands: (("ajq-" . "async-job-queue-")("q-" . "queue-"))
+;; End:
 
 ;; Local Variables:
 ;; read-symbol-shorthands: (("ajq-" . "async-job-queue-"))
