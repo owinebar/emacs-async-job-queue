@@ -54,12 +54,13 @@
 
 (defmacro async-job-queue--call-with-warn (&rest app-form)
   "Perform funcall of user callback APP-FORM and display errors as warnings."
-  `(condition-case err
-       (funcall ,@app-form)
-     (error
-      (display-warning
-       :error
-       (format "%s: %S" (car err) (cdr err))))))
+  (let ((err-sym (gensym "err")))
+    `(condition-case ,err-sym
+	 (funcall ,@app-form)
+       (error
+	(display-warning
+	 :error
+	 (format "%s: %S" (car ,err-sym) (cdr ,err-sym)))))))
     
 (cl-defstruct (ajq--table
 	       (:constructor async-job-queue--table-create)
@@ -388,7 +389,8 @@ If JOB is nil, dispatch first job from queue of pending jobs."
 		     (q-dequeue q)))))
   (when job
     (let ((s (ajq--alloc-slot tbl))
-	  (on-dispatch (ajq--job-dispatched job)))
+	  (on-dispatch (ajq--job-dispatched job))
+	  (on-finish (ajq--job-succeed job)))
       ;;(message "Allocated slot %S" (ajq--slot-index s))
       (setf (ajq--slot-job s) job)
       ;; (message "Set job for slot %S %S"
@@ -399,7 +401,12 @@ If JOB is nil, dispatch first job from queue of pending jobs."
       (setf (ajq--job-started job) (current-time))
       (let ((f (async-start
 		(ajq--expr-to-async
-		 (ajq--job-program job)))))
+		 (ajq--job-program job))
+		(lambda (v)
+		  (if on-finish
+		      (async-job-queue--handle-finished-job s job v)
+		    (ajq--cleanup-job job s))
+		  (async-job-queue--ensure-queue-running tbl)))))
 	(setf (ajq--job-future job) f)
 	(when on-dispatch
 	  (ajq--call-with-warn on-dispatch job)))))
