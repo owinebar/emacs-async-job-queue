@@ -1,5 +1,4 @@
-;;; async-job-queue-test.el --- test support for async-job-queue
-;;; async-job-queue-test.el        -*- lexical-binding: t; -*-
+;;; async-job-queue-test.el --- test support for async-job-queue   -*- lexical-binding: t; -*-
 
 ;; Copyright (C) 2023  Onnie Winebarger
 
@@ -125,10 +124,13 @@
 		      (ajq--table-in-use tbl)
 		      (ajq--slots-in-use-list tbl)))
       (insert (format "Current table queue-size %S\n"
-		      (ajq--queue-size q))))))
+		      (queue-length q))))))
 
 (defun async-job-queue-test--dispatched-test (job test-run)
   "Report dispatch of test expression in JOB for TEST-RUN."
+  (message "dispatched-test %S %S"
+	   (async-job-queue-displayable-job job)
+	   (async-job-queue-test-displayable-test-run test-run))
   (let ((q (async-job-queue-test--test-run-results test-run))
 	(t0 (ajq--job-started job))
 	(t1 (ajq--job-ended job))
@@ -139,10 +141,15 @@
       (goto-char (point-max))
       (insert (format "Dispatched job id %S\n" id))
       (async-job-queue-test--report-table lb tbl))
-    (ajq--queue-push q `(Dispatched ,id ,t0 ,t1))))
+    (queue-enqueue q `(Dispatched ,id ,t0 ,t1))
+    (message "Completed dispatched-test %S" id)))
 
 (defun async-job-queue-test--succeed-test (job v test-run)
   "Report completion of test expression in JOB for TEST-RUN with result V."
+  (message "succeed-test %S %S %S"
+	   v
+	   (async-job-queue-displayable-job job)
+	   (async-job-queue-test-displayable-test-run test-run))
   (let ((q (async-job-queue-test--test-run-results test-run))
 	(t0 (ajq--job-started job))
 	(t1 (ajq--job-ended job))
@@ -155,10 +162,14 @@
       (goto-char (point-max))
       (insert (format "Success job id %S returned %S\n" id v))
       (async-job-queue-test--report-table lb tbl))
-    (ajq--queue-push q `(Success ,id ,t0 ,t1 ,dt ,v))))
+    (queue-enqueue q `(Success ,id ,t0 ,t1 ,dt ,v))
+    (message "Completed succeed-test %S" v)))
 
 (defun async-job-queue-test--timeout-test (job test-run)
   "Report timeout of test expression in JOB for TEST-RUN."
+  (message "timeout-test %S %S"
+	   (async-job-queue-displayable-job job)
+	   (async-job-queue-test-displayable-test-run test-run))
   (let ((q (async-job-queue-test--test-run-results test-run))
 	(t0 (ajq--job-started job))
 	(t1 (ajq--job-ended job))
@@ -171,10 +182,13 @@
       (goto-char (point-max))
       (insert (format "Timeout job %S after %S\n" id dt))
       (async-job-queue-test--report-table lb tbl))
-    (ajq--queue-push q `(Timeout ,id ,t0 ,t1 ,dt))))
+    (queue-enqueue q `(Timeout ,id ,t0 ,t1 ,dt))))
 
 (defun async-job-queue-test--quit-test (job test-run)
   "Report cancellation of test expression in JOB for TEST-RUN."
+  (message "quit-test %S %S"
+	   (async-job-queue-displayable-job job)
+	   (async-job-queue-test-displayable-test-run test-run))
   (let ((q (async-job-queue-test--test-run-results test-run))
 	(t0 (ajq--job-started job))
 	(t1 (ajq--job-ended job))
@@ -187,7 +201,7 @@
       (goto-char (point-max))
       (insert (format "Quit job id %S after %S\n" id dt))
       (async-job-queue-test--report-table lb tbl))
-    (ajq--queue-push q `(quit ,id ,t0 ,t1 ,dt))))
+    (queue-enqueue q `(quit ,id ,t0 ,t1 ,dt))))
 
 (defvar async-job-queue-test--tests-created 0
   "Number of test runs created.")
@@ -215,7 +229,7 @@ Arguments:
 	     :freq freq
 	     :max-time max-time
 	     :test test
-	     :results (ajq--make-queue)
+	     :results (make-queue)
 	     :log (get-buffer-create logname))))
     (setf (async-job-queue-test--test-run-on-dispatch tr)
 	  (lambda (job)
@@ -224,10 +238,10 @@ Arguments:
 	  (lambda (job v)
 	    (async-job-queue-test--succeed-test job v tr)))
     (setf (async-job-queue-test--test-run-on-timeout tr)
-	  (lambda (job v)
+	  (lambda (job)
 	    (async-job-queue-test--timeout-test job tr)))
     (setf (async-job-queue-test--test-run-on-quit tr)
-	  (lambda (job v)
+	  (lambda (job)
 	    (async-job-queue-test--quit-test job tr)))
     tr))
 
@@ -247,7 +261,7 @@ Arguments:
 	  (lambda (tbl)
 	    (let ((log (async-job-queue-test--test-run-log tr)))
 	      (with-current-buffer log
-		(insert (format "Completed test run %S\n" id))
+		(insert (format "Completed test run %S on queue %S\n" id (ajq--table-id tbl)))
 		(let ((inhibit-message t))
 		  (pp (async-job-queue-test-displayable-test-run tr) (current-buffer)))))))
     (setq ls (async-job-queue-test--test-exprs test))
@@ -306,11 +320,11 @@ Arguments:
    1 nil 't1)
   "Create a test run specification for test definition 1.")
 
-;; (defvar async-job-queue-test-test1-run2
-;;   (async-job-queue-test-run-test async-job-queue-test-test1 1 2 't1r5))
+(defvar async-job-queue-test-test1-run2
+  (async-job-queue-test-run-test async-job-queue-test-test1 10 2 't1r5))
 
-;; (defvar async-job-queue-test-test1-run3
-;;   (async-job-queue-test-run-test async-job-queue-test-test1 1 (num-processors) 't1r3))
+(defvar async-job-queue-test-test1-run3
+  (async-job-queue-test-run-test async-job-queue-test-test1 1 (num-processors) 't1r3))
 
 
 ;;(pp (car async-job-queue-test-test1-run2) (get-buffer "*scratch*"))

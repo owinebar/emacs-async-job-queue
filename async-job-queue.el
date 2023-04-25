@@ -6,7 +6,7 @@
 ;; Copyright (C) 2023 by Onnie Lynn Winebarger <owinebar@gmail.com>
 ;; Keywords: extensions, lisp
 ;; Version: 0.1
-;; Package-Requires: ((async "1.4") (emacs "25.1"))
+;; Package-Requires: ((async "1.4") (emacs "25.1") (queue "0.2"))
 ;; URL: https://github.com/owinebar/emacs-async-job-queue
 
 ;; This program is free software; you can redistribute it and/or modify
@@ -137,7 +137,8 @@
    `max-time' maximum wall clock time to allow run, nil for no limit
    `future' object representing the async process
    `ended' time result was ready or job terminated
-   `result' nil if timed out, else singleton list holding return value
+   `returned' t if result is set by the return value of program, nil otherwise
+   `result' the value returned by program, if it completed
    `dispatched' callback function to run immediately after starting the job
    `succeed' callback function to use when results are available
    `timeout' callback function to use when process times out
@@ -150,6 +151,7 @@
   max-time
   future
   ended
+  returned
   result
   dispatched
   succeed
@@ -165,48 +167,55 @@
 
 (defun async-job-queue-displayable-table (tbl)
   "Minimal description of job queue TBL."
-  `(ajq--table
-    (id ,(ajq--table-id tbl))
-    (slots ,(length (ajq--table-slots tbl)))
-    (active ,(ajq--table-active tbl))
-    (in-use ,(ajq--table-in-use tbl)
-	    ,(ajq--table-first-used tbl)
-	    ,(ajq--table-last-used tbl)
-	    ,(ajq--slots-in-use-list tbl))
-    (free ,(ajq--table-free tbl)
-	  ,(ajq--table-first-free tbl)
-	  ,(ajq--table-last-free tbl)
-	  ,(ajq--slots-free-list tbl))
-    (queue ,(q-length (ajq--table-queue tbl)))
-    (on-empty ,(and (ajq--table-on-empty tbl) t))
-    (freq ,(ajq--table-freq tbl))
-    (timer ,(ajq--timer-info (ajq--table-timer tbl)))))
+  (if tbl
+      `(ajq--table
+	(id ,(ajq--table-id tbl))
+	(slots ,(length (ajq--table-slots tbl)))
+	(active ,(ajq--table-active tbl))
+	(in-use ,(ajq--table-in-use tbl)
+		,(ajq--table-first-used tbl)
+		,(ajq--table-last-used tbl)
+		,(ajq--slots-in-use-list tbl))
+	(free ,(ajq--table-free tbl)
+	      ,(ajq--table-first-free tbl)
+	      ,(ajq--table-last-free tbl)
+	      ,(ajq--slots-free-list tbl))
+	(queue ,(q-length (ajq--table-queue tbl)))
+	(on-empty ,(and (ajq--table-on-empty tbl) t))
+	(freq ,(ajq--table-freq tbl))
+	(timer ,(and (ajq--table-timer tbl) (ajq--timer-info (ajq--table-timer tbl)))))
+    '(ajq--table nil)))
+  
 
 (defun async-job-queue-displayable-slot (slot)
   "Minimal description of queue slot SLOT."
-  `(ajq--slot
-    (table ,(ajq--table-id (ajq--slot-table slot)))
-    (index ,(ajq--slot-index slot))
-    (next ,(ajq--slot-next slot))
-    (prev ,(ajq--slot-prev slot))
-    (job ,(ajq--job-id (ajq--slot-job slot)))))
-
+  (if slot
+      `(ajq--slot
+	(table ,(and (ajq--slot-table slot) (ajq--table-id (ajq--slot-table slot))))
+	(index ,(ajq--slot-index slot))
+	(next ,(ajq--slot-next slot))
+	(prev ,(ajq--slot-prev slot))
+	(job ,(and (ajq--slot-job slot) (ajq--job-id (ajq--slot-job slot)))))
+    '(ajq--slot nil)))
 
 (defun async-job-queue-displayable-job (job)
   "Minimal description of JOB."
-  `(ajq--job
-    (id ,(ajq--job-id job))
-    (table ,(ajq--table-id (ajq--job-table job)))
-    (run-slot ,(ajq--job-run-slot job))
-    (started ,(ajq--job-started job))
-    (ended ,(ajq--job-ended job))
-    (max-time ,(ajq--job-max-time job))
-    (future ,(ajq--job-future job))
-    (result ,(ajq--job-result job))
-    (dispatched ,(and (ajq--job-dispatched job) t))
-    (succeed ,(and (ajq--job-succeed job) t))
-    (timeout ,(and (ajq--job-timeout job) t))
-    (quit ,(and (ajq--job-quit job) t))))
+  (if job
+      `(ajq--job
+	(id ,(ajq--job-id job))
+	(table ,(and (ajq--job-table job) (ajq--table-id (ajq--job-table job))))
+	(run-slot ,(ajq--job-run-slot job))
+	(started ,(ajq--job-started job))
+	(ended ,(ajq--job-ended job))
+	(max-time ,(ajq--job-max-time job))
+	(future ,(ajq--job-future job))
+	(returned ,(ajq--job-returned job))
+	(result ,(ajq--job-result job))
+	(dispatched ,(and (ajq--job-dispatched job) t))
+	(succeed ,(and (ajq--job-succeed job) t))
+	(timeout ,(and (ajq--job-timeout job) t))
+	(quit ,(and (ajq--job-quit job) t)))
+    `(ajq--job nil)))
 
 (defun async-job-queue--expr-to-async (e)
   "Convert expression E to thunk as necessary for `async-start'."
@@ -222,20 +231,30 @@
   "Indexes of slots in in-use list of TBL."
   (let ((slots (ajq--table-slots tbl))
 	(idx (ajq--table-first-used tbl))
-	used)
+	used next)
     (while idx
       (push idx used)
-      (setq idx (ajq--slot-next (aref slots idx))))
+      (setq next (ajq--slot-next (aref slots idx)))
+      (if (member next used)
+	  (progn
+	    (push next used)
+	    (setq idx nil))
+	(setq idx next)))
     (nreverse used)))
 
 (defun async-job-queue--slots-free-list (tbl)
   "Indexes of slots in free list of TBL."
   (let ((slots (ajq--table-slots tbl))
 	(idx (ajq--table-first-free tbl))
-	free)
+	free next)
     (while idx
       (push idx free)
-      (setq idx (ajq--slot-next (aref slots idx))))
+      (setq next (ajq--slot-next (aref slots idx)))
+      (if (member next free)
+	  (progn
+	    (push next free)
+	    (setq idx nil))
+	(setq idx next)))
     (nreverse free)))
 
 (defvar async-job-queue--num-tables-created 0
@@ -302,6 +321,8 @@ Arguments:
 Return the allocated slot."
   (when (= (ajq--table-free tbl) 0)
     (signal 'ajq-table-no-free-slot tbl))
+  ;; (message "Allocating slot in %S"
+  ;; 	   (async-job-queue-displayable-table tbl))
   (let ((first-free (ajq--table-first-free tbl))
 	(last-used  (ajq--table-last-used tbl))
 	(slots (ajq--table-slots tbl))
@@ -332,6 +353,8 @@ Return the allocated slot."
     (setf (ajq--table-last-used tbl) first-free)
     ;; maintain invariant that nil job is free list
     (setf (ajq--slot-job a) t)
+    ;; (message "Allocated slot in %S"
+    ;; 	     (async-job-queue-displayable-table tbl))
     a))
 
 ;; Frees an allocated slot
@@ -341,8 +364,11 @@ Return the allocated slot."
 Remove slot S from the in-use list and append
 to the free list.  Return the job previously
 associated with S"
+  ;; (message "Reclaiming slot %S" (async-job-queue--slot-index s))
   (when (null (ajq--slot-job s))
     (signal 'ajq-slot-already-free s))
+  ;; (message "Reclaiming slot %S"
+  ;; 	   (async-job-queue-displayable-slot s))
   (let ((tbl (ajq--slot-table s))
 	(prev-used (ajq--slot-prev s))
 	(next-used (ajq--slot-next s))
@@ -351,6 +377,12 @@ associated with S"
 	first-free last-free slots
 	n-in-use n-free
 	a b)
+    ;; (message "Reclaiming slot %S job %S"
+    ;; 	     (async-job-queue--slot-index s)
+    ;; 	     (async-job-queue-displayable-job job))
+    ;; (message "Reclaiming slot %S table %S"
+    ;; 	     (async-job-queue--slot-index s)
+    ;; 	     (async-job-queue-displayable-table tbl))
     (setf (ajq--slot-job s) nil)
     (setq first-free (ajq--table-first-free tbl)
 	  last-free (ajq--table-last-free tbl)
@@ -378,6 +410,10 @@ associated with S"
       (setq a (aref slots last-free))
       (setf (ajq--slot-next a) idx))
     (setf (ajq--table-last-free tbl) idx)
+    (setf (ajq--slot-next s) nil)
+    ;; (message "Reclaimed slot %S in table %S"
+    ;; 	     (async-job-queue-displayable-slot s)
+    ;; 	     (async-job-queue-displayable-table tbl))
     job))
 
 (defun async-job-queue--dispatch (tbl &optional job)
@@ -403,10 +439,16 @@ If JOB is nil, dispatch first job from queue of pending jobs."
 		(ajq--expr-to-async
 		 (ajq--job-program job))
 		(lambda (v)
-		  (if on-finish
-		      (async-job-queue--handle-finished-job s job v)
-		    (ajq--cleanup-job job s))
-		  (async-job-queue--ensure-queue-running tbl)))))
+		  ;; (message "Async for job %S returned %S" (ajq--job-id job) v)
+		  (ajq--cleanup-job job s)
+		  ;; (message "Cleaned up job %S" (ajq--job-id job))
+		  (setf (ajq--job-returned job) t)
+		  (setf (ajq--job-result job) v)
+		  ;; do this before ensuring queue in case this
+		  ;; emptied the table
+		  (when on-finish
+		    (ajq--call-with-warn on-finish job v))
+		  (ajq--ensure-queue-running tbl)))))
 	(setf (ajq--job-future job) f)
 	(when on-dispatch
 	  (ajq--call-with-warn on-dispatch job)))))
@@ -474,7 +516,8 @@ ON-QUIT - continuation to call if job is cancelled"
 (defun async-job-queue--handle-finished-job (slot job v)
   "Clean up SLOT in TBL that ran JOB and returned value V."
   (ajq--cleanup-job job slot)
-  (setf (ajq--job-result job) (cons v nil))
+  (setf (ajq--job-returned job) t)
+  (setf (ajq--job-result job) v)
   (ajq--call-with-warn (ajq--job-succeed job) job v))
 
 (defun async-job-queue--handle-terminated-job (slot job fut)
@@ -541,24 +584,32 @@ ARGS - arguments to supply to FXN"
   "Manage administratvia for TBL.
 Ensures queued jobs are run as slots become available, if queue is active.
 Sets up a timer if one is needed, cancels an existing one if it is not."
+  ;; (message "ajq--ensure-queue-running %S" (async-job-queue-displayable-table tbl))
   (let ((on-empty (ajq--table-on-empty tbl))
 	(freq (ajq--table-freq tbl))
 	(timer (ajq--table-timer tbl))
 	(active (ajq--table-active tbl)))
     (when active
+      ;; (message "ajq--ensure-queue-running active")
       (ajq--dispatch-queued tbl)
+      ;; (message "ajq--ensure-queue-running dispatched queued")
+      ;; (message "ajq--ensure-queue-running timer %S" (and timer t))
       (when (and timer
 		 on-empty
 		 (= (ajq--table-in-use tbl) 0))
+	;; (message "ajq--ensure-queue-running calling on-empty")
 	(ajq--call-with-warn on-empty tbl)))
     (if (= (ajq--table-in-use tbl) 0)
 	;; this is correct whether or not the job queue is active
 	(when timer
+	  ;; (message "ajq--ensure-queue-running cancelling timer")
 	  (cancel-timer timer)
 	  (setq timer nil)
 	  (setf (ajq--table-timer tbl) nil))
       (unless (or (not active) timer)
+	;; (message "ajq--ensure-queue-running setting up timer")
 	(setq timer (ajq--make-timer freq freq #'ajq--process-queue tbl))
+	;; (message "ajq--ensure-queue-running timer %S" (ajq--timer-info timer))
 	(setf (ajq--table-timer tbl) timer)))
     timer))
 
@@ -567,6 +618,7 @@ Sets up a timer if one is needed, cancels an existing one if it is not."
   "Check slots of TBL for completed jobs.
 Poll running jobs in queue TBL for completion or timeout.
 Dispatch pending jobs as slots become available when TBL is active."
+  ;; (message "ajq--process-queue %S" (async-job-queue-displayable-table tbl))
   (let ((idx (ajq--table-first-used tbl))
 	(slots (ajq--table-slots tbl))
 	slot job fut t0 t1 maxt dt)
