@@ -613,7 +613,7 @@ Sets up a timer if one is needed, cancels an existing one if it is not."
 	  (setf (async-job-queue--table-timer tbl) nil))
       (unless (or (not active) timer)
 	;; (message "ajq--ensure-queue-running setting up timer")
-	(setq timer (async-job-queue--make-timer freq freq #'async-job-queue-process-queue tbl))
+	(setq timer (async-job-queue--make-timer freq freq #'async-job-queue--process-queue tbl))
 	;; (message "ajq--ensure-queue-running timer %S" (async-job-queue--timer-info timer))
 	(setf (async-job-queue--table-timer tbl) timer)))
     timer))
